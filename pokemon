@@ -1,0 +1,221 @@
+# -*- coding: utf-8 -*-
+import torch
+import os
+import glob
+import random
+import csv
+import sys
+import requests
+import re
+from importlib import reload
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
+
+
+
+
+
+class Pokemon(Dataset):
+
+    def __init__(self, root, resize, mode):
+        super(Pokemon, self).__init__()
+
+        # 以下先将参数保存下来
+        self.root = root
+        self.resize = resize
+
+        # 将名字与label一一对应，下面为字典类型 例如 pokeman\\xx\\00001.png
+        # 例如 所有xx的文件对应 标签0 所有yy的文件对应 标签1.  ....
+        self.name2label = {}              # "sq...":0
+
+        # 创建映射表， os.listdir会将目录和文件都加载进来，将文件过滤掉.但其加载的顺序不固定，先用sort将顺序固定下
+        # os.path.join()返回：将多个路径组合后返回
+        for name in sorted(os.listdir(os.path.join(root))):
+            if not os.path.isdir(os.path.join(root, name)):
+                continue
+
+            self.name2label[name] = len(self.name2label.keys())
+        print('len name2label:', len(self.name2label.keys()))
+        print(self.name2label)
+
+        # 数据对：image_path + image_label，将path加载进来而不是把文件加载进来（太大），即这里的images都是指文件的路径
+        self.images, self.labels = self.load_csv('images.csv')
+
+        # 不同模式下对数据量需求不一样
+        if mode == 'train':     # 60%用作训练
+            self.images = self.images[:int(0.6*len(self.images))]
+            self.labels = self.labels[:int(0.6*len(self.labels))]
+        elif mode == 'val':     # 20% = 60%->80%
+            self.images = self.images[int(0.6*len(self.images)):int(0.8*len(self.images))]
+            self.labels = self.labels[int(0.6*len(self.labels)):int(0.8*len(self.labels))]
+        else:                 # 20% = 80%->100%
+            self.images = self.images[int(0.8*len(self.images)):]
+            self.labels = self.labels[int(0.8*len(self.labels)):]
+
+    def load_csv(self, filename):
+
+        if not os.path.exists(os.path.join(self.root, filename)):
+            images = []                  # 这里的images都是路径而不是真的图片
+            for name in self.name2label.keys():
+                # 将self.root下的文件加载进来
+                # 'pokemon\\mewtwo\\00001.png
+                print('load name:', name)
+                images += glob.glob(os.path.join(self.root, name, '*.png'))
+                images += glob.glob(os.path.join(self.root, name, '*.jpg'))
+                images += glob.glob(os.path.join(self.root, name, '*.jpeg'))
+
+            # 1167, 'pokemon\\bulbasaur\\00000000.png'
+            print(len(images), images)
+
+            random.shuffle(images)
+            # 打开一个文件对象，写入 ‘w'文本文件 加了newline=''后行之间就不会有空行
+            try:
+                with open(os.path.join(self.root, filename), mode='w', newline='', encoding="utf-8") as f:
+
+                    writer = csv.writer(f)
+                    for img in images:                     # imges是路径 如'pokemon\\bulbasaur\\00000000.png'
+                        name = img.split(os.sep)[-2]       # img.split(os.sep：是分隔符)将路径分隔开去-2 即取bulbasaur
+                        print('after slit_name:', name)
+                        label = self.name2label[name]
+                        print('label;', label)
+                        # 'pokemon\\bulbasaur\\00000000.png', 0
+                        # 将对应关系写入文本文件，并保存到filename中
+                        writer.writerow([img, label])
+                    print('writen into csv file:', filename)
+            except FileNotFoundError:
+                message = "Sorry,the file " + filename + " does not exist."
+                print(message)
+        # read from csv file
+        images, labels = [], []
+        with open(os.path.join(self.root, filename), encoding="utf-8") as f:
+            # 将其加载进来
+            reader = csv.reader(f)
+            for row in reader:
+                # 'pokemon\\bulbasaur\\00000000.png', 0
+                img, label = row
+                # 获取label，img，并保存下来
+                label = int(label)
+                # img.encode('utf-8')
+
+                images.append(img)
+                labels.append(label)
+            # 保证长度和数据一致，不一致是将报错
+        assert len(images) == len(labels)
+
+        return images, labels
+
+    def __len__(self):
+        # 此时返回的对应模式下的长度，比如train下，需要60%的数据
+        return len(self.images)
+
+    def denormalize(self, x_hat):         # 因为下面Normalize将图片由 0~1 转化到 -1~1
+
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+
+        # x_hat = (x-mean)/std
+        # x = x_hat*std + mean
+        # x: [c, h, w]
+        # mean: [3] => [3, 1, 1]
+        mean = torch.tensor(mean).unsqueeze(1).unsqueeze(1)
+        std = torch.tensor(std).unsqueeze(1).unsqueeze(1)
+        # print(mean.shape, std.shape)
+        x = x_hat * std + mean
+        return x
+    """
+    我本想加个处理图片集中的损坏照片，但是在处理无法打开的图片时，该怎么让他自动打开下一张照片？目前无法解决。
+    所以，自定义中的图片必须完好无损。
+    def deal_damaged_convert_rgb(self, x):
+        try:
+            img_convert = Image.open(x).convert('RGB')    # img_type: <class 'PIL.Image.Image'>
+            return img_convert
+        except OSError:
+            message = "Sorry,the image file " + x + " cannot identify." + "deal next image..."
+            print(message)
+            pass
+            # x, y = next(iter(db))             失败
+            # self.deal_damaged_convert_rgb(x)
+    """
+
+    def __getitem__(self, idx):
+        # idx~[0~len(images)]
+        # self.images, self.labels
+        # img: 'pokemon\\bulbasaur\\00000000.png'
+        # label: 0
+        img, label = self.images[idx], self.labels[idx]
+        print('img', img)
+        tf = transforms.Compose([
+            lambda x:Image.open(x).convert('RGB'),   # string path= > image data，下面把尺寸变大
+            transforms.Resize((int(self.resize*1.25), int(self.resize*1.25))),
+            transforms.RandomRotation(15),     # 旋转15°，太大导致网络不容易收敛
+            transforms.CenterCrop(self.resize),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],    # 将数据从0~1 转换到 -1~1
+                                 std=[0.229, 0.224, 0.225])
+        ])
+
+        """try:
+            img = tf(img)                 # 将img（实际保存的是img的路径）转化为预处理后的数据
+        except OSError:
+            message = "Sorry,the image file " + img + " cannot identify." + "deal next image..."
+            print(message)
+            img = self.images[idx + 1]
+        """
+        img = tf(img)
+        print('img:', img.shape)
+        print('img_type:', type(img))
+        # img_rgb = self.convert_RGB(img)
+        # img_deal = tf(img_rgb)
+        label = torch.tensor(label)   # 将label也转化为tensor
+        print('label:', label)
+        return img, label
+
+
+def main():
+
+    import visdom
+    import time
+    import torchvision
+
+    viz = visdom.Visdom()
+
+# 方法二：db的方式有两种，一种利用torchvision.datasets.ImageFolder()，但这种方式 只能是基于文件摆放规则的情况下
+# 另外一种Pokemon ，则是通用方式
+    # tf = transforms.Compose([
+    #                 transforms.Resize((64,64)),
+    #                 transforms.ToTensor(),
+    # ])
+    # db = torchvision.datasets.ImageFolder(root='pokemon', transform=tf)
+    # loader = DataLoader(db, batch_size=32, shuffle=True)
+    #
+    # print(db.class_to_idx)     # 打印文件与label的一一对应方式
+    #
+    # for x,y in loader:
+    #     viz.images(x, nrow=8, win='batch', opts=dict(title='batch'))
+    #     viz.text(str(y.numpy()), win='label', opts=dict(title='batch-y'))
+    #
+    #     time.sleep(10)
+
+    file_root = 'D:\\Users\\Administrator.SD-20190411KYMB\\PycharmProjects\\' \
+                'Long_pytorch_lesson\\lesson63自定义数据集\\pokemon\\'
+    db = Pokemon(file_root, 64, 'train')
+    print('len db:', len(db))
+    x, y = next(iter(db))
+    print('sample:', x.shape, y.shape, y)
+
+    # 正常显示的图片数据是 0~1 所以将denormnalize
+    viz.image(db.denormalize(x), win='sample_x', opts=dict(title='sample_x'))
+
+    loader = DataLoader(db, batch_size=32, shuffle=True, num_workers=1)
+    print('loader：', loader)
+
+    for x, y in loader:
+        viz.images(db.denormalize(x), nrow=8, win='batch', opts=dict(title='batch'))
+        viz.text(str(y.numpy()), win='label', opts=dict(title='batch-y'))
+
+        time.sleep(10)
+        
+
+if __name__ == '__main__':
+    main()
