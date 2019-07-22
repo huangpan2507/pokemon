@@ -1,0 +1,107 @@
+# -*- coding: utf-8 -*-
+import torch
+from torch import optim, nn
+import visdom
+import torchvision
+from torch.utils.data import DataLoader
+
+from pokeman import Pokemon
+from Resnet import ResNet18
+
+batchsz = 32
+lr = 1e-3
+epochs = 10
+
+# device = torch.device('cuda')
+
+# 如果希望通过设置随机数种子，在gpu或cpu上固定每一次的训练结果.随机数种子seed确定时，模型的训练结果将始终保持一致
+# 即能够复现结果
+torch.manual_seed(1234)
+
+
+# 自定义的训练集
+
+train_db = Pokemon('D:/Users/Administrator.SD-20190411KYMB/PycharmProjects/Long_pytorch_lesson/'
+                   'lesson63自定义数据集/pokemon/', 224, mode='train')
+val_db = Pokemon('D:/Users/Administrator.SD-20190411KYMB/PycharmProjects/Long_pytorch_lesson/'
+                 'lesson63自定义数据集/pokemon/', 224, mode='val')
+test_db = Pokemon('D:/Users/Administrator.SD-20190411KYMB/PycharmProjects/Long_pytorch_lesson/'
+                  'lesson63自定义数据集/pokemon/', 224, mode='test')
+train_loader = DataLoader(train_db, batch_size=batchsz, shuffle=True, num_workers=1)
+val_loader = DataLoader(val_db, batch_size=batchsz, num_workers=1)
+test_loader = DataLoader(test_db, batch_size=batchsz, num_workers=1)
+
+viz = visdom.Visdom()
+
+
+# 将计算loss和准确率的部分写成函数，以免重复工作
+
+
+def evalute(model, loader):
+    model.eval()
+
+    correct = 0
+    total = len(loader.dataset)
+
+    for x, y in loader:
+#   x, y = x.to(device), y.to(device)
+        with torch.no_grad():
+            logits = model(x)
+            pred = logits.argmax(dim=1)
+        correct += torch.eq(pred, y).sum().float().item()
+
+    return correct / total
+
+
+def main():
+
+# model = ResNet18(5).to(device)
+    model = ResNet18(5)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criteon = nn.CrossEntropyLoss()
+
+    best_acc, best_epoch = 0, 0
+    global_step = 0
+    viz.line([0], [-1], win='loss', opts=dict(title='loss'))
+    viz.line([0], [-1], win='val_acc', opts=dict(title='val_acc'))
+    for epoch in range(epochs):
+
+        for step, (x, y) in enumerate(train_loader):
+            # x: [b, 3, 224, 224], y: [b]
+            # x, y = x.to(device), y.to(device)
+
+            model.train()
+            logits = model(x)
+            # criteon会自动将number 编码为one-shot形式
+            loss = criteon(logits, y)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            viz.line([loss.item()], [global_step], win='loss', update='append')
+            global_step += 1
+
+        if epoch % 1 == 0:
+            # 利用计算准确率的函数
+            val_acc = evalute(model, val_loader)
+            # 在val数据集中选择训练最好时的参数，保存下来
+            if val_acc > best_acc:
+                best_epoch = epoch
+                best_acc = val_acc
+
+                torch.save(model.state_dict(), 'best.mdl')
+
+                viz.line([val_acc], [global_step], win='val_acc', update='append')
+
+    print('best acc:', best_acc, 'best epoch:', best_epoch)
+
+    model.load_state_dict(torch.load('best.mdl'))
+    print('loaded from ckpt!')
+
+    test_acc = evalute(model, test_loader)
+    print('test acc:', test_acc)
+
+
+if __name__ == '__main__':
+    main()
