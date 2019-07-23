@@ -71,7 +71,8 @@ class Pokemon(Dataset):
             random.shuffle(images)
             # 打开一个文件对象，写入 ‘w'文本文件 加了newline=''后行之间就不会有空行
             try:
-                with open(os.path.join(self.root, filename), mode='w', newline='', encoding="utf-8") as f:
+                # with open(os.path.join(self.root, filename), mode='w', newline='', encoding="utf-8") as f: 不需要，否则乱码
+                with open(os.path.join(self.root, filename), mode='w', newline='') as f:
 
                     writer = csv.writer(f)
                     for img in images:                     # imges是路径 如'pokemon\\bulbasaur\\00000000.png'
@@ -88,7 +89,8 @@ class Pokemon(Dataset):
                 print(message)
         # read from csv file
         images, labels = [], []
-        with open(os.path.join(self.root, filename), encoding="utf-8") as f:
+        # with open(os.path.join(self.root, filename), encoding="utf-8") as f:
+        with open(os.path.join(self.root, filename), mode='r') as f:
             # 将其加载进来
             reader = csv.reader(f)
             for row in reader:
