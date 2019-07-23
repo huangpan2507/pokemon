@@ -197,6 +197,8 @@ def main():
     #
     #     time.sleep(10)
 
+
+# 路径包含中文名，以及太长，此时路径若用单引号，则路径字符切片会切错（系统会自动加\\导致自己计算 不是-2），使用双\\没问题
     file_root = 'D:\\Users\\Administrator.SD-20190411KYMB\\PycharmProjects\\' \
                 'Long_pytorch_lesson\\lesson63自定义数据集\\pokemon\\'
     db = Pokemon(file_root, 64, 'train')
